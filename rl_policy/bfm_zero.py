@@ -622,6 +622,17 @@ class BFMZeroPolicy:
 if __name__ == "__main__":
     import argparse
     import yaml
+    import sys
+    import atexit
+
+    # Save terminal settings before sshkeyboard modifies them
+    if sys.stdin.isatty():
+        import termios
+        _original_termios = termios.tcgetattr(sys.stdin)
+        def _restore_terminal():
+            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, _original_termios)
+        atexit.register(_restore_terminal)
+
     parser = argparse.ArgumentParser(description="Robot")
     parser.add_argument(
         "--robot_config", type=str, default="config/robot/g1.yaml", help="robot config file"

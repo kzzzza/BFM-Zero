@@ -2,6 +2,6 @@ type: tracking
 start: 0
 end: 5000 #1650
 stop: 0
-ctx_path: ../tracking_inference/Stefanos_1os_antrikos_karsilamas_C3D_stageii_z.pkl
+ctx_path: ../tracking_inference/zs_walk.pkl
 gamma: 0.9  # discount factor for context averaging
 window_size: 1  # number of frames to average
