@@ -1,6 +1,6 @@
 def get_default_fbcpr_config_as_a_dict():
     """Settings from the original fb-cpr example code. This matches ICLR 2025 submission runs"""
-    hidden_dim = 1024
+    hidden_dim = 512
     hidden_layers = 2
     nn_model_type = "simple"
     config_dict = {
@@ -28,15 +28,15 @@ def get_default_fbcpr_config_as_a_dict():
                         "hidden_layers": hidden_layers,
                     },
                     "discriminator": {
-                        "hidden_dim": 1024,
-                        "hidden_layers": 3,
+                        "hidden_dim": 512,
+                        "hidden_layers": 2,
                     },
                     "z_dim": 256,
                     "norm_z": True,
                 },
             },
             "train": {
-                "batch_size": 1024,
+                "batch_size": 512,
                 "update_z_every_step": 150,
                 "discount": 0.98,
                 "grad_penalty_discriminator": 10,
