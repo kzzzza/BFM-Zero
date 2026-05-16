@@ -83,6 +83,7 @@ def main(model_folder: Path, data_path: Path | None = None, headless: bool = Tru
     print("-"*80)
     
     output_dir = model_folder / "tracking_inference"
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     for MOTION_ID in motion_list:
         env.set_is_evaluating(MOTION_ID)
@@ -136,7 +137,7 @@ def main(model_folder: Path, data_path: Path | None = None, headless: bool = Tru
 
     # Visualization length: match inference length so expert and policy videos align
     episode_len = z.shape[0]
-    episode_len = 100
+    episode_len = 1000
     print(f"Saving video for tracking ({episode_len} steps)")
     if save_mp4:
         rgb_renderer = IsaacRendererWithMuJoco(render_size=256)
