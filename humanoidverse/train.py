@@ -112,7 +112,7 @@ class TrainConfig(BaseConfig):
 
     # misc
     load_isaac_expert_data: bool = True
-    buffer_device: str = "cpu"
+    buffer_device: str = "cuda:0"
     # Default to True; otherwise you will spam the console with tqdm
     disable_tqdm: bool = True
 
@@ -689,11 +689,11 @@ def train_bfm_zero():
             make_config_g1env_compatible=False,
             root_height_obs=True
         ),
-        work_dir='results/bfmzero-isaac',
+        work_dir='results/bfmzero-test',
         seed=4728,
-        online_parallel_envs=512,
+        online_parallel_envs=128,
         log_every_updates=384000,
-        num_env_steps=384000000,
+        num_env_steps=100000000,
         update_agent_every=512,
         num_seed_steps=10240,
         num_agent_updates=16,
@@ -706,15 +706,15 @@ def train_bfm_zero():
         prioritization_mode='exp',
         use_trajectory_buffer=True,
         buffer_size=2560000,
-        use_wandb=False,
-        wandb_ename='yitangl',  # your wandb entity (username/team), empty = default from wandb login
-        wandb_gname='bfmzero-isaac',  # run group
+        use_wandb=True,
+        wandb_ename='231180007-nanjing-university',  # your wandb entity (username/team), empty = default from wandb login
+        wandb_gname='bfmzero-text',  # run group
         wandb_pname='bfmzero-isaac',  # your wandb project name
         load_isaac_expert_data=True,
-        buffer_device='cuda',
+        buffer_device='cuda:0',
         disable_tqdm=False,
         evaluations=[HumanoidVerseIsaacTrackingEvaluationConfig(name='HumanoidVerseIsaacTrackingEvaluationConfig', generate_videos=False, videos_dir='videos', video_name_prefix='unknown_agent', name_in_logs='humanoidverse_tracking_eval', env=None, num_envs=512, n_episodes_per_motion=1)],
-        eval_every_steps=9600000,
+        eval_every_steps=5000000,
         tags={},
     )
     workspace = cfg.build()
