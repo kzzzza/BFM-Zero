@@ -3,3 +3,7 @@ unitree_sdk2_python
 __pycache__
 model/
 video/
+data/motions
+*.swp
+deploy_needed/
+docs/
