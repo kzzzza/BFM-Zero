@@ -5,5 +5,3 @@ model/
 video/
 data/motions
 *.swp
-deploy_needed/
-docs/
