@@ -1,0 +1,41 @@
+# Goal-mode z generation config for scripts/motion_to_z_onnx.py.
+#
+# Each clip becomes one entry in the output dict: { name: ndarray[1, 256] }.
+# The 21 keys below mirror the legacy model/goal_inference/goal_reaching.pkl
+# so the resulting pkl is a drop-in replacement.
+#
+# motion_root is prepended to relative motion_file paths. Most of the source
+# clips live in ../BFM-Zero_inf/data/amass/ (AMASS retarget) -- only the
+# ones present locally will be processed; missing files are skipped with a
+# warning.
+
+output: model/goal_inference/goal_reaching.pkl
+motion_root: ../BFM-Zero_inf
+
+clips:
+  # Verified locally (example_motion/) -- safe entry points for testing.
+  - { name: dance1_subject2_1150, motion_file: example_motion/dance1_subject2_50_jpos.npz, frame_idx: 1150 }
+  - { name: dance1_subject2_2877, motion_file: example_motion/dance1_subject2_50_jpos.npz, frame_idx: 2877 }
+
+  # The clips below depend on additional retargeted motions not bundled with
+  # the deploy repo. Adjust motion_file paths to point at the corresponding
+  # .npz files in your local BFM-Zero_inf/data tree.
+  - { name: fallAndGetUp1_subject4_2193,    motion_file: data/amass/fallAndGetUp1_subject4_stageii.npz, frame_idx: 2193 }
+  - { name: fallAndGetUp1_subject4_2230,    motion_file: data/amass/fallAndGetUp1_subject4_stageii.npz, frame_idx: 2230 }
+  - { name: fallAndGetUp1_subject4_3350,    motion_file: data/amass/fallAndGetUp1_subject4_stageii.npz, frame_idx: 3350 }
+  - { name: fallAndGetUp1_subject4_5015,    motion_file: data/amass/fallAndGetUp1_subject4_stageii.npz, frame_idx: 5015 }
+  - { name: dance1_subject3_505,            motion_file: data/amass/dance1_subject3_stageii.npz,        frame_idx: 505  }
+  - { name: dance1_subject3_4024,           motion_file: data/amass/dance1_subject3_stageii.npz,        frame_idx: 4024 }
+  - { name: dance1_subject3_4700,           motion_file: data/amass/dance1_subject3_stageii.npz,        frame_idx: 4700 }
+  - { name: dance2_subject4_700,            motion_file: data/amass/dance2_subject4_stageii.npz,        frame_idx: 700  }
+  - { name: dance2_subject4_670,            motion_file: data/amass/dance2_subject4_stageii.npz,        frame_idx: 670  }
+  - { name: fightAndSports1_subject1_252,   motion_file: data/amass/fightAndSports1_subject1_stageii.npz, frame_idx: 252  }
+  - { name: fightAndSports1_subject1_745,   motion_file: data/amass/fightAndSports1_subject1_stageii.npz, frame_idx: 745  }
+  - { name: fightAndSports1_subject1_1009,  motion_file: data/amass/fightAndSports1_subject1_stageii.npz, frame_idx: 1009 }
+  - { name: fight1_subject3_5559,           motion_file: data/lafan/fight1_subject3.npz, frame_idx: 5559  }
+  - { name: fight1_subject3_10229,          motion_file: data/lafan/fight1_subject3.npz, frame_idx: 10229 }
+  - { name: fight1_subject3_11981,          motion_file: data/lafan/fight1_subject3.npz, frame_idx: 11981 }
+  - { name: walk2_subject1_2588,            motion_file: data/lafan/walk2_subject1.npz, frame_idx: 2588  }
+  - { name: walk2_subject1_11375,           motion_file: data/lafan/walk2_subject1.npz, frame_idx: 11375 }
+  - { name: walk2_subject1_11384,           motion_file: data/lafan/walk2_subject1.npz, frame_idx: 11384 }
+  - { name: walk3_subject3_9044,            motion_file: data/lafan/walk3_subject3.npz, frame_idx: 9044  }

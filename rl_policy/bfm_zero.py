@@ -38,7 +38,8 @@ class BFMZeroPolicy:
         robot_type = robot_config["ROBOT_TYPE"]
         if robot_type == "g1_real":
             # example: sys.path.append("/home/unitree/User/unitree_sdk2/build/lib")
-            sys.path.append("/path/to/your/unitree_sdk2/build/lib")
+            # 修改为端侧开发板的 lib 实际路径
+            sys.path.append("/home/unitree/workspace/yky/unitree_sdk2/build/lib")
             import g1_interface
             network_interface = robot_config.get("INTERFACE", None)
             self.robot = g1_interface.G1Interface(network_interface)
@@ -248,7 +249,10 @@ class BFMZeroPolicy:
         # load onnx policy
         import onnxruntime
         logger.info(f"Loading onnx policy from {model_path}")
-        self.onnx_policy_session = onnxruntime.InferenceSession(model_path)
+        self.onnx_policy_session = onnxruntime.InferenceSession(
+            model_path,
+            providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+        )
         self.onnx_input_name = self.onnx_policy_session.get_inputs()[0].name
         self.onnx_output_name = self.onnx_policy_session.get_outputs()[0].name
 

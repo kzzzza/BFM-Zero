@@ -164,3 +164,83 @@ def quat_conjugate(q: np.ndarray) -> np.ndarray:
     shape = q.shape
     q = q.reshape(-1, 4)
     return np.concatenate((q[:, 0:1], -q[:, 1:]), axis=-1).reshape(shape)
+
+
+def quat_to_tan_norm(q: np.ndarray) -> np.ndarray:
+    """Convert quaternion to 6D tangent-normal rotation representation.
+
+    Builds tan = R(q)·[1,0,0] and normal = R(q)·[0,0,1] and concatenates.
+
+    Args:
+        q: Quaternion in (w, x, y, z). Shape is (..., 4).
+
+    Returns:
+        6D rotation representation. Shape is (..., 6) — first 3 dims are
+        the rotated x-axis (tan), last 3 dims are the rotated z-axis (normal).
+    """
+    shape = q.shape[:-1] + (6,)
+    q = q.reshape(-1, 4)
+    n = q.shape[0]
+    ref_tan = np.zeros((n, 3), dtype=q.dtype)
+    ref_tan[:, 0] = 1.0
+    ref_norm = np.zeros((n, 3), dtype=q.dtype)
+    ref_norm[:, 2] = 1.0
+    tan = quat_rotate_numpy(q, ref_tan)
+    norm = quat_rotate_numpy(q, ref_norm)
+    return np.concatenate([tan, norm], axis=-1).reshape(shape)
+
+
+def calc_heading_quat_inv(q: np.ndarray) -> np.ndarray:
+    """Inverse of the yaw-only (heading) component of a quaternion.
+
+    Equivalent to ``quat_conjugate(yaw_quat(q))``: extracts the rotation
+    around the z-axis encoded by q and returns its inverse, also as a
+    (w, x, y, z) quaternion.
+
+    Args:
+        q: Quaternion in (w, x, y, z). Shape is (..., 4).
+
+    Returns:
+        Heading-only inverse quaternion in (w, x, y, z). Shape is (..., 4).
+    """
+    return quat_conjugate(yaw_quat(q))
+
+
+def calc_angular_velocity(quat_cur: np.ndarray, quat_prev: np.ndarray, dt: float) -> np.ndarray:
+    """Finite-difference angular velocity from two consecutive quaternions.
+
+    Both inputs are (w, x, y, z). Mirrors the formula in
+    ``BFM-Zero_inf/env.py:calc_angular_velocity``:
+        delta = R(quat_prev).inv() * R(quat_cur)
+        omega = delta.as_rotvec() / dt
+
+    Args:
+        quat_cur:  Current  quaternion(s) in (w, x, y, z). Shape (4,) or (N, 4).
+        quat_prev: Previous quaternion(s) in (w, x, y, z). Same shape.
+        dt: Timestep between frames (seconds).
+
+    Returns:
+        Angular velocity. Shape (3,) for (4,) input, else (N, 3).
+    """
+    from scipy.spatial.transform import Rotation as R
+
+    cur = np.asarray(quat_cur, dtype=np.float64)
+    prev = np.asarray(quat_prev, dtype=np.float64)
+
+    orig_shape = cur.shape
+    if cur.ndim == 1:
+        cur = cur[None, :]
+        prev = prev[None, :]
+
+    # scipy expects (x, y, z, w)
+    cur_xyzw = cur[:, [1, 2, 3, 0]]
+    prev_xyzw = prev[:, [1, 2, 3, 0]]
+
+    rot_cur = R.from_quat(cur_xyzw)
+    rot_prev = R.from_quat(prev_xyzw)
+    delta = rot_prev.inv() * rot_cur
+    omega = delta.as_rotvec() / dt
+
+    if orig_shape == (4,):
+        return omega[0]
+    return omega
