@@ -119,8 +119,9 @@ class CommandSender:
         else:
             cmd = self.robot.create_zero_command()
 
-            # Apply kp_level scaling (kd remains constant, consistent with original implementation)
-            kp_scaled = self.joint_kp_unitree * self._kp_level
+            # joint_kp_unitree is already scaled by kp_level in the setter, so use it
+            # as-is here. (Previously multiplied again, which double-scaled to kp_level^2.)
+            kp_scaled = self.joint_kp_unitree
             kd_scaled = self.joint_kd_unitree
 
             q_target = list(cmd.q_target)

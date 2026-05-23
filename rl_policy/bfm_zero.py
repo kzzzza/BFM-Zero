@@ -438,15 +438,22 @@ class BFMZeroPolicy:
         if self.wc_msg is None:
             return
 
-        # print(f"wc_msg.A: {self.wc_msg.A}")
-        if self.wc_msg.A and not self.last_wc_msg.A:
-            self.handle_joystick_button("A")
-        if self.wc_msg.B and not self.last_wc_msg.B:
-            self.handle_joystick_button("B")
-        if self.wc_msg.X and not self.last_wc_msg.X:
-            self.handle_joystick_button("X")
-        if self.wc_msg.Y and not self.last_wc_msg.Y:
-            self.handle_joystick_button("Y")
+        # L1/L2 act as modifiers: when held, A/B/X/Y route to kp_level combos
+        # instead of their single-press actions. R1/R2 are safety keys and never
+        # participate in combos.
+        modifier = None
+        if self.wc_msg.L1:
+            modifier = "L1"
+        elif self.wc_msg.L2:
+            modifier = "L2"
+
+        for action_key in ("A", "B", "X", "Y"):
+            if getattr(self.wc_msg, action_key) and not getattr(self.last_wc_msg, action_key):
+                if modifier is not None:
+                    self.handle_kp_combo(f"{modifier}+{action_key}")
+                else:
+                    self.handle_joystick_button(action_key)
+
         if self.wc_msg.L1 and not self.last_wc_msg.L1:
             self.handle_joystick_button("L1")
         if self.wc_msg.L2 and not self.last_wc_msg.L2:
@@ -455,7 +462,7 @@ class BFMZeroPolicy:
             self.handle_joystick_button("R1")
         if self.wc_msg.R2 and not self.last_wc_msg.R2:
             self.handle_joystick_button("R2")
-        
+
         self.last_wc_msg = self.wc_msg
 
 
@@ -509,9 +516,38 @@ class BFMZeroPolicy:
                     self.z_index += 1
                 logger.info(colored(f"Switch to goal {list(self.z_dict.keys())[self.z_index]} ({self.z_index+1}/{self.num_selected_goals})", "blue"))
 
-        # Debug print for kp level tuning
-        if cur_key in ["Y+left", "Y+right", "A+left", "A+right"]:
-            logger.info(colored(f"Debug kp level: {self.command_sender.kp_level}", "green"))
+    def handle_kp_combo(self, combo):
+        """Adjust kp_level via L1/L2 modifier combos.
+
+        Works under USE_JOYSTICK: True where the keyboard listener is not started,
+        giving the joystick a way to tune kp_level on the real robot.
+
+        Mapping (matches the keyboard 4/5/6/7/0 keys in handle_keyboard_button):
+            L1+Y → kp_level += 0.1   (coarse up,   like '7')
+            L1+A → kp_level -= 0.1   (coarse down, like '4')
+            L1+B → kp_level  = 1.0   (reset,       like '0')
+            L2+Y → kp_level += 0.01  (fine up,     like '6')
+            L2+A → kp_level -= 0.01  (fine down,   like '5')
+
+        Any other combo (e.g. L1+X) is a no-op with a warning; this is intentional
+        so that holding the modifier reliably masks the action key's single-press
+        behavior.
+        """
+        cs = self.command_sender
+        if combo == "L1+Y":
+            cs.kp_level += 0.1
+        elif combo == "L1+A":
+            cs.kp_level -= 0.1
+        elif combo == "L1+B":
+            cs.kp_level = 1.0
+        elif combo == "L2+Y":
+            cs.kp_level += 0.01
+        elif combo == "L2+A":
+            cs.kp_level -= 0.01
+        else:
+            logger.warning(colored(f"Joystick combo '{combo}' is not defined", "yellow"))
+            return
+        logger.info(colored(f"Debug kp level: {cs.kp_level:.3f} ({combo})", "green"))
 
     # ----------------------------- Keyboard handling -----------------------------
     def start_key_listener(self):
@@ -593,34 +629,19 @@ class BFMZeroPolicy:
             self.lin_vel_command[0, 1] = 0.0
         elif keycode == "5":
             self.command_sender.kp_level -= 0.01
-            for i in range(len(self.command_sender.robot_kp)):
-                self.command_sender.robot_kp[i] = self.robot.MOTOR_KP[i] * self.command_sender.kp_level
-            logger.info(colored(f"Debug kp level: {self.command_sender.kp_level}", "green"))
-            logger.info(colored(f"Debug kp: {self.command_sender.robot_kp}", "green"))
+            logger.info(colored(f"Debug kp level: {self.command_sender.kp_level:.3f}", "green"))
         elif keycode == "6":
             self.command_sender.kp_level += 0.01
-            for i in range(len(self.command_sender.robot_kp)):
-                self.command_sender.robot_kp[i] = self.robot.MOTOR_KP[i] * self.command_sender.kp_level
-            logger.info(colored(f"Debug kp level: {self.command_sender.kp_level}", "green"))
-            logger.info(colored(f"Debug kp: {self.command_sender.robot_kp}", "green"))
+            logger.info(colored(f"Debug kp level: {self.command_sender.kp_level:.3f}", "green"))
         elif keycode == "4":
             self.command_sender.kp_level -= 0.1
-            for i in range(len(self.command_sender.robot_kp)):
-                self.command_sender.robot_kp[i] = self.robot.MOTOR_KP[i] * self.command_sender.kp_level
-            logger.info(colored(f"Debug kp level: {self.command_sender.kp_level}", "green"))
-            logger.info(colored(f"Debug kp: {self.command_sender.robot_kp}", "green"))
+            logger.info(colored(f"Debug kp level: {self.command_sender.kp_level:.3f}", "green"))
         elif keycode == "7":
             self.command_sender.kp_level += 0.1
-            for i in range(len(self.command_sender.robot_kp)):
-                self.command_sender.robot_kp[i] = self.robot.MOTOR_KP[i] * self.command_sender.kp_level
-            logger.info(colored(f"Debug kp level: {self.command_sender.kp_level}", "green"))
-            logger.info(colored(f"Debug kp: {self.command_sender.robot_kp}", "green"))
+            logger.info(colored(f"Debug kp level: {self.command_sender.kp_level:.3f}", "green"))
         elif keycode == "0":
             self.command_sender.kp_level = 1.0
-            for i in range(len(self.command_sender.robot_kp)):
-                self.command_sender.robot_kp[i] = self.robot.MOTOR_KP[i] * self.command_sender.kp_level
-            logger.info(colored(f"Debug kp level: {self.command_sender.kp_level}", "green"))
-            logger.info(colored(f"Debug kp: {self.command_sender.robot_kp}", "green"))
+            logger.info(colored(f"Debug kp level: {self.command_sender.kp_level:.3f}", "green"))
         
 
 if __name__ == "__main__":
