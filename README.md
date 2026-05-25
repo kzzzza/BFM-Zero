@@ -1,141 +1,112 @@
-<h1 align="center"> BFM-Zero: A Promptable Behavioral Foundation Model for Humanoid Control Using Unsupervised Reinforcement Learning </h1>
-
-<div align="center">
+> 基于[LeCAR-Lab BFM-Zero](https://github.com/LeCAR-Lab/BFM-Zero)项目修改
 
 [[arXiv]](https://arxiv.org/abs/2511.04131)
 [[Paper]](https://lecar-lab.github.io/BFM-Zero/resources/paper.pdf)
 [[Website]](https://lecar-lab.github.io/BFM-Zero/)
 
-<!-- [[Arxiv]](https://lecar-lab.github.io/SoFTA/) -->
-<!-- [[Video]](https://www.youtube.com/) -->
+> **Sim2Sim / Sim2Real 部署代码请见 [`deploy`](https://github.com/kzzzza/BFM-Zero/tree/deploy) 分支。**
 
-<img src="static/images/ip.png" style="height:50px;" />
-<img src="static/images/meta.png" style="height:50px;" />
-</div>
+## 项目简介
 
-## Code
+BFM-Zero 是一个面向人形机器人控制的**行为基础模型**（Behavioral Foundation Model），通过**无监督强化学习**在 Unitree G1（29 自由度）上训练一个 latent 条件化策略。核心技术为 Forward-Backward 表征 + CPR（Critic Pessimism Regularization）。
 
-Code will be released in stages:
+本分支（`main`）提供完整的**训练 + 评测 + 推理流水线**，同时支持 Isaac Sim 与 MuJoCo 两个仿真后端。
 
-- [x] **Pretrained checkpoints + sim-to-sim / sim-to-real deployment**  
-  → [`deploy`](https://github.com/LeCAR-Lab/BFM-Zero/tree/deploy) branch
-
-- [x] **Minimal inference code + tutorial**  
-  → [`minimal_inference`](https://github.com/LeCAR-Lab/BFM-Zero/tree/minimal_inference) branch
-
-- [x] **Full training and evaluation pipelines**
-
-- [ ] **Minimal training code (RTX 4090 support)**
-
-# BFM-Zero Training
-
-Humanoidverse training for BFM-Zero with Isaac Sim or MuJoCo.
-
-## Requirements
+## 环境要求
 
 - Python 3.10
-- CUDA-capable GPU
-- Isaac Sim (Linux) or MuJoCo for simulation
+- 支持 CUDA 的 GPU
+- Isaac Sim（仅 Linux）或 MuJoCo（跨平台）
 
-## Installation
+## 安装
 
-### 1. Clone and fetch large files (Git LFS)
-
-This repo uses [Git LFS](https://git-lfs.github.com/) for motion data and model. After cloning, install LFS and pull the large files:
+### 1. 克隆仓库并下载模型数据
 
 ```bash
 git clone https://github.com/LeCAR-Lab/BFM-Zero.git
 cd BFM-Zero
-git lfs install
-git lfs pull
 ```
-Note: If the repository exceeded its LFS budget,  you can access the data here: https://huggingface.co/LeCAR-Lab/BFM-Zero/tree/main/data
 
-### 2. Install uv
+> 从 HuggingFace 下载数据：<https://huggingface.co/LeCAR-Lab/BFM-Zero/tree/main/data>
+
+### 2. 安装 uv
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-Or with pip: `pip install uv`
+或者用 pip 安装：`pip install uv`
 
-### 3. Install dependencies
+### 3. 安装依赖
 
-From this directory (BFM-Zero):
+在 `BFM-Zero` 根目录下执行：
 
 ```bash
 uv sync
 ```
 
-## Data
+## 数据
 
-- **Motion data**: Included via Git LFS in `humanoidverse/data/` after `git lfs pull`. `lafan_29dof.pkl` is for evaluation; `lafan_29dof_10s-clipped.pkl` is for training.
-- If you are unsure about the data format, please check the discussion in
-  [Issue #12](https://github.com/LeCAR-Lab/BFM-Zero/issues/12).
+- **动作数据**：一并下载到 `humanoidverse/data/`：
+  - `lafan_29dof_10s-clipped.pkl`：训练用动作数据。
+  - `lafan_29dof.pkl`：评测用动作数据。
+- 数据格式可参考 [Issue #12](https://github.com/LeCAR-Lab/BFM-Zero/issues/12) 中的讨论。
 
+## 训练
 
-## Training
-
-### Launch
+### 启动
 
 ```bash
 uv run python -m humanoidverse.train
 ```
-Note: change `buffer_device` to "cuda:0" if you have larger vRAM.
 
-### Main parameters
+### 主要参数
 
-Training is driven by `humanoidverse.train` (see `train_bfm_zero()` in `train.py`). Key options:
+训练入口位于 `humanoidverse/train.py` 中的 `train_bfm_zero()`，由 `TrainConfig`（pydantic 模型）驱动。主要参数按领域分类如下：
 
-| Area | Parameters |
-|------|------------|
-| **Scale** | `num_env_steps`, `online_parallel_envs`, `buffer_size`, `checkpoint_every_steps` |
-| **Paths** | `work_dir`, env’s `lafan_tail_path` (expert motion data) |
-| **Run** | `seed`, `use_wandb`, `wandb_pname` / `wandb_gname` / `wandb_ename` |
-| **Policy / optim** | `update_agent_every`, `num_agent_updates`, `num_seed_steps`; agent config (e.g. `batch_size`, `lr_actor`, `lr_critic`, `discount`) |
-| **Robot / env** | Overridden via `hydra_overrides` (e.g. `robot=...`, `robot.control.action_scale=...`, `env.config.lie_down_init=...`) |
+| 类别 | 参数 |
+|------|------|
+| **规模 (Scale)** | `num_env_steps`（默认 30M）、`online_parallel_envs`（默认 16）、`buffer_size`（默认 500k）、`checkpoint_every_steps`（默认 5M） |
+| **路径 (Paths)** | `work_dir`、`motions` / `motions_root`（专家动作数据） |
+| **运行 (Run)** | `seed`、`use_wandb`、`wandb_pname` / `wandb_gname` / `wandb_ename` |
+| **策略 / 优化器 (Policy)** | `update_agent_every`（默认 500）、`num_agent_updates`（默认 50）、`num_seed_steps`（默认 50k）；agent 内部 `batch_size`（默认 512）、`lr_actor` / `lr_critic`（默认 1e-4）、`discount`（默认 0.98） |
+| **机器人 / 环境** | 通过 `hydra_overrides` 覆盖（如 `robot=...`、`robot.control.action_scale=...`、`env.config.lie_down_init=...`） |
 
-Override from code by passing a custom `TrainConfig`, or extend the CLI to accept Hydra/tyro overrides.
+如需自定义参数，可在代码中传入自定义的 `TrainConfig`，或扩展 CLI 以接受 Hydra / tyro 覆盖。
 
-Tips: After 50-100 M steps training, eval/emd should lower than 0.75.
-
+**经验提示**：训练 50–100M 步后，`eval/emd` 应低于 0.75。
 
 <div align="center">
 <img src="static/images/training_curve.png" style="height:300px;" />
 </div>
 
----
+## 单卡 4090 训练
 
-## Inference
+默认配置已针对单卡 RTX 4090（24 GB 显存）做了精简，无需额外调整即可直接启动：
 
-After training, three scripts handle inference and export:
+| 项 | 原值 | 4090 友好默认值 |
+|----|------|----------------|
+| 网络隐藏层维度 `hidden_dim` | 1024 | **512** |
+| 训练 `batch_size` | 1024 | **512** |
+| 判别器隐藏层数 | 3 | **2** |
+| 评测 `num_envs` | 1024 | **512** |
+| `disable_tqdm` | True | **False** |
 
-| Script | Purpose |
-|--------|---------|
-| **`humanoidverse.tracking_inference`** | Motion tracking → extract latent \(z\), export ONNX |
-| **`humanoidverse.goal_inference`** | Goal-reaching → compute \(z\) for different goals |
-| **`humanoidverse.reward_inference`** | Reward-based tasks → compute \(z\) and evaluate performance |
-
-### Example outputs (videos)
-
-Videos from `BFM-Zero/model` after running each inference script with `--save_mp4`:
-
-**1. Tracking inference** — expert (left) vs policy (right):
-
-<img src="https://github.com/LeCAR-Lab/BFM-Zero/blob/main/model/tracking_inference/tracking.gif" controls width="400">
-
-
-**2. Goal inference** — goal-reaching rollout:
-
-<img src="https://github.com/LeCAR-Lab/BFM-Zero/blob/main/model/goal_inference/goal.gif" controls width="400">
-
-**3. Reward inference** — example task (e.g. move-ego):
-
-<img src="https://github.com/LeCAR-Lab/BFM-Zero/blob/main/model/reward_inference/move-ego-low0.6-0-0.7.gif" controls width="400"></img>
+此外，在 48GB 的魔改4090 上请将 `buffer_device` 设为 `"cuda"`（默认值；显存更大的机器，例如 ≥ 48 GB，可改回 `"cuda:0"` 并相应放大 `hidden_dim` / `batch_size`）。
 
 ---
 
-All scripts use **tyro** for the CLI. General usage:
+## 推理
+
+训练完成后，提供三个推理脚本（均使用 [tyro](https://github.com/brentyi/tyro) 进行 CLI 解析）：
+
+| 脚本 | 用途 |
+|------|------|
+| **`humanoidverse.tracking_inference`** | 动作追踪 → 提取 latent \(z\)，导出 ONNX |
+| **`humanoidverse.goal_inference`** | 目标到达 → 为不同目标计算 \(z\) |
+| **`humanoidverse.reward_inference`** | 奖励驱动任务 → 计算 \(z\) 并评测表现 |
+
+### 使用方法参考
 
 ```bash
 uv run python -m humanoidverse.tracking_inference --help
@@ -143,21 +114,21 @@ uv run python -m humanoidverse.goal_inference --help
 uv run python -m humanoidverse.reward_inference --help
 ```
 
-**Common arguments:**
+**通用参数：**
 
-- `--model_folder`: Path to the trained model directory (must contain `checkpoint/` and `config.json`).
-- `--data_path` (optional): Override the default LaFan data path.
-- `--simulator`: `isaacsim` (default) or `mujoco`. **Use `--simulator mujoco` to run without Isaac Lab** (MuJoCo only; output is directly usable for sim2sim visualization).
-- `--headless` (default: `True`): Run without GUI; use `--no-headless` to show the viewer.
-- `--save_mp4`: Save rendered videos.
+- `--model_folder`：训练好的模型目录（需包含 `checkpoint/` 与 `config.json`）。
+- `--data_path`（可选）：覆盖默认的 LaFan 数据路径。
+- `--simulator`：`isaacsim`（默认）或 `mujoco`。**指定 `--simulator mujoco` 可在没有 Isaac Lab 的机器上运行**（仅 MuJoCo，可直接用于 sim2sim 可视化）。
+- `--headless`（默认 `True`）：无 GUI 运行；加 `--no-headless` 打开 viewer。
+- `--save_mp4`：保存渲染视频。
 
-**Output:** All inference scripts export the policy to ONNX (`{model_name}.onnx`) in their respective output subdirectories under `exported/`.
+**输出：** 所有推理脚本会把策略导出为 ONNX（`{model_name}.onnx`），落在 `exported/` 下各自的子目录里。Tracking 推理同时会通过 `humanoidverse/utils/helpers.py` 中的 `export_backward_map_as_onnx()` 导出 backward map 的 ONNX。
 
 ---
 
 ### Tracking inference
 
-Runs motion tracking, exports ONNX, and optionally saves a comparison video (expert vs policy).
+运行动作追踪、导出 ONNX，并可选地保存专家 vs 策略的对比视频。
 
 ```bash
 uv run python -m humanoidverse.tracking_inference \
@@ -167,19 +138,19 @@ uv run python -m humanoidverse.tracking_inference \
     --save_mp4
 ```
 
-- `--model_folder` should point to the **outer** model directory (the one that contains `checkpoint/`).
-- You can set motion IDs and visualization length inside the script if exposed.
+- `--model_folder` 指向 **外层** 模型目录（包含 `checkpoint/` 的那一级）。
+- 可在脚本内通过 `--motion_list` 指定追踪哪些动作 ID（默认 `[25]`）。
 
-**Outputs** (under `model_folder/tracking_inference/`):
+**输出**（`model_folder/tracking_inference/` 下）：
 
-- `zs_{MOTION_ID}.pkl`: Latent \(z\) for each motion.
-- `tracking.mp4`: Expert vs policy comparison (when `--save_mp4` is set).
+- `zs_{MOTION_ID}.pkl`：每段动作对应的 latent \(z\)。
+- `tracking.mp4`：专家 vs 策略对比视频（启用 `--save_mp4` 时）。
 
 ---
 
 ### Goal inference
 
-Computes \(z\) for predefined goals and optionally renders goal-reaching videos.
+为预定义的目标计算 \(z\)，并可选地渲染目标到达视频。
 
 ```bash
 uv run python -m humanoidverse.goal_inference \
@@ -188,63 +159,58 @@ uv run python -m humanoidverse.goal_inference \
     --save_mp4
 ```
 
-- Iterates over predefined goals and computes the corresponding \(z\).
-- Requires `goal_frames_lafan29dof.json` (the script searches for it in several locations).
+- 遍历预定义的一组目标并计算对应的 \(z\)。
+- 依赖 `goal_frames_lafan29dof.json`（脚本会在多个位置查找）。
 
-**Outputs** (under `model_folder/goal_inference/`):
+**输出**（`model_folder/goal_inference/` 下）：
 
-- `goal_reaching.pkl`: Dictionary `{goal_name -> z}`.
-- `videos/*.mp4`: Per-goal videos (if `--save_mp4 True`).
+- `goal_reaching.pkl`：`{goal_name -> z}` 字典。
+- `videos/*.mp4`：每个目标对应的视频（启用 `--save_mp4` 时）。
 
 ---
 
 ### Reward inference
 
-Runs reward-based task inference: computes \(z\) and optionally runs rollouts for evaluation.
+运行奖励驱动的任务推理：计算 \(z\)，并可选地跑 rollout 做评测。
 
 ```bash
 uv run python -m humanoidverse.reward_inference \
     --model_folder /path/to/model \
-    --save_mp4 
+    --save_mp4
 ```
 
-**Key arguments:**
+**关键参数：**
 
-| Argument | Description |
-|----------|-------------|
-| `--num_samples` | Number of samples in the buffer per inference run. |
-| `--n_inferences` | Number of inference latents per reward task. |
-| `--episode_length` | Steps per rollout. |
-| `--skip_rollouts` | If `True`, only compute \(z\); do not run visualization rollouts. |
+| 参数 | 说明 |
+|------|------|
+| `--num_samples` | 单次推理时缓冲区中的样本数量（默认 150000）。 |
+| `--n_inferences` | 每个奖励任务的推理 latent 数量（默认 1）。 |
+| `--episode_length` | 每次 rollout 的步数（默认 500）。 |
+| `--skip_rollouts` | 仅计算 \(z\)，不跑可视化 rollout。 |
 
-**Outputs** (under `model_folder/reward_inference/`):
+**输出**（`model_folder/reward_inference/` 下）：
 
-- `reward_locomotion.pkl`: Dictionary `{task_name -> z}`.
-- `videos/*.mp4`: Per-task videos (when `--save_mp4` is set).
+- `reward_locomotion.pkl`：`{task_name -> z}` 字典。
+- `videos/*.mp4`：每个任务对应的视频（启用 `--save_mp4` 时）。
 
 ---
 
+## Roadmap
 
+- [ ] **Unitree R1 训练支持**：R1 URDF 与网格资产已加入 `humanoidverse/data/robots/r1/`，对应训练 config 仍在补齐中。
+
+## Lint
+
+```bash
+uv run ruff check .
+uv run ruff format .
+```
 
 ## License
 
-BFM-Zero is licensed under the CC BY-NC 4.0 license. See [LICENSE](LICENSE) for details.
+BFM-Zero 采用 CC BY-NC 4.0 协议授权，详见 [LICENSE](LICENSE)。
 
 ## Citation
-
-If you find this project useful in your research, please consider citing:
-
-<!--
-```bibtex
-@article{li2025bfmzero,
-  title   = {BFM-Zero: A Promptable Behavioral Foundation Model for Humanoid Control Using Unsupervised Reinforcement Learning},
-  author  = {Yitang Li and Zhengyi Luo and Tonghe Zhang and Cunxi Dai and Anssi Kanervisto and Andrea Tirinzoni and Haoyang Weng and Kris Kitani and Mateusz Guzek and Ahmed Touati and Alessandro Lazaric and Matteo Pirotta and Guanya Shi},
-  journal = {arXiv preprint arXiv:2505.06776},
-  year    = {2025}
-}
-```
-Wrong arXiv id here!!
---> 
 
 ```bibtex
 @misc{li2025bfmzeropromptablebehavioralfoundation,
@@ -257,8 +223,4 @@ Wrong arXiv id here!!
       url={https://arxiv.org/abs/2511.04131}, 
 }
 ```
-
-## Contact
-
-If you have any problems, please contact [liyitang475@gmail.com](mailto:liyitang475@gmail.com).
 
