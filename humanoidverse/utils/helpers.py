@@ -286,3 +286,51 @@ def export_meta_policy_as_onnx(inference_model, path, exported_policy_name, exam
         output_names=["action"],  # Name the output
         opset_version=13,  # Specify the opset version, if needed
     )
+
+
+def export_backward_map_as_onnx(inference_model, path, exported_name, example_obs=None):
+    """Export the FB backward map B(obs) -> project_z(z) as ONNX.
+
+    Input layout (flat, mirrors the policy export style):
+        b_obs: [B, state_dim + privileged_state_dim]
+    Output:
+        z: [B, z_dim]   (already passed through project_z)
+    """
+    os.makedirs(path, exist_ok=True)
+    path = os.path.join(path, exported_name)
+
+    obs_space = inference_model.obs_space
+    assert "state" in obs_space.spaces and "privileged_state" in obs_space.spaces, (
+        f"Backward map export expects 'state' and 'privileged_state' in obs_space, got {list(obs_space.spaces.keys())}"
+    )
+    state_dim = obs_space.spaces["state"].shape[0]
+    priv_dim = obs_space.spaces["privileged_state"].shape[0]
+
+    inference_model = inference_model.eval()
+    model_cpu = copy.deepcopy(inference_model).to("cpu")
+
+    class BWrapper(nn.Module):
+        def __init__(self, model, state_dim, priv_dim):
+            super().__init__()
+            self.model = model
+            self.state_dim = state_dim
+            self.priv_dim = priv_dim
+
+        def forward(self, b_obs):
+            state = b_obs[:, : self.state_dim]
+            priv = b_obs[:, self.state_dim : self.state_dim + self.priv_dim]
+            z = self.model.backward_map({"state": state, "privileged_state": priv})
+            return self.model.project_z(z)
+
+    wrapper = BWrapper(model_cpu, state_dim, priv_dim)
+    if example_obs is None:
+        example_obs = torch.randn(1, state_dim + priv_dim)
+    torch.onnx.export(
+        wrapper,
+        example_obs,
+        path,
+        verbose=True,
+        input_names=["b_obs"],
+        output_names=["z"],
+        opset_version=13,
+    )

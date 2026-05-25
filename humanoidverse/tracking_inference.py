@@ -8,7 +8,7 @@ from humanoidverse.agents.load_utils import load_model_from_checkpoint_dir
 import json
 from humanoidverse.agents.envs.humanoidverse_isaac import HumanoidVerseIsaacConfig, IsaacRendererWithMuJoco
 import torch
-from humanoidverse.utils.helpers import export_meta_policy_as_onnx
+from humanoidverse.utils.helpers import export_meta_policy_as_onnx, export_backward_map_as_onnx
 from humanoidverse.utils.helpers import get_backward_observation
 import joblib
 import mediapy as media
@@ -58,13 +58,20 @@ def main(model_folder: Path, data_path: Path | None = None, headless: bool = Tru
     export_meta_policy_as_onnx(
         model,
         output_dir,
-        f"{model_name}.onnx",
+        f"{model_name}_policy.onnx",
         {"actor_obs": torch.randn(1, model._actor.input_filter.output_space.shape[0] + model.cfg.archi.z_dim)},
         z_dim=model.cfg.archi.z_dim,
         history=('history_actor' in model.cfg.archi.actor.input_filter.key),
         use_29dof=True,
     )
     print(f"Exported model to {output_dir}/{model_name}.onnx")
+
+    export_backward_map_as_onnx(
+        model,
+        output_dir,
+        f"{model_name}_backward.onnx",
+    )
+    print(f"Exported backward map to {output_dir}/{model_name}_backward.onnx")
 
     def tracking_inference(obs) -> torch.Tensor:
         z = model.backward_map(obs)
