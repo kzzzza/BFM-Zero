@@ -1,6 +1,6 @@
 # G1 Joint & Body Ordering Reference
 
-BFM-Zero pipeline 中存在两套关节/body 排列顺序：**Isaac ordering**（模型使用）和 **BMimic ordering**（GMR retarget 输出）。本文档记录两者的完整定义和映射关系。
+BFM-Zero pipeline 中存在两套关节/body 排列顺序：**Isaac ordering**（模型使用）和 **BMimic ordering**（GMR retarget 输出，NJU_3DV_Lab目前使用格式）。本文档记录两者的完整定义和映射关系。
 
 ---
 

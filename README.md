@@ -39,8 +39,11 @@
 | 模式 | 配置文件 | 隐变量 z 来源 | 切换键 |
 |---|---|---|---|
 | **tracking** | `config/exp/tracking/walking.yaml` | 预计算 z 序列 `.pkl`，按 `gamma` 折扣窗口加权 | `[` 启动、`p` 复位 |
+| **tracking_online** | `config/exp/tracking_online/walking.yaml` | 每帧实时跑 B 网络 ONNX 算 z，支持 `.npz` 文件或 ZMQ 流式输入 | `[` 启动、`p` 复位 |
 | **reward** | `config/exp/reward/locomotion.yaml` | 多条 reward 的 z 字典 + `selected_rewards_filter_z` 过滤 | `n` 切换 |
 | **goal** | `config/exp/goal/goal.yaml` | `goal_reaching.pkl` 中按名字挑姿态 | `n` 切换 |
+
+> `tracking_online` 的完整使用方法、ZMQ 转发原理、以及如何把自定义动作数据源接入策略，见 [`docs/online_tracking_zmq.md`](docs/online_tracking_zmq.md)。
 
 ---
 
@@ -79,10 +82,13 @@ python -m sim_env.base_sim \
 ### 3.3 启动策略（终端 2，三种任务）
 
 ```bash
-./rl_policy/tracking.sh     # 动作跟踪
-./rl_policy/reward.sh       # reward 推理
-./rl_policy/goal.sh         # goal 到达
+./rl_policy/tracking.sh           # 动作跟踪（预计算 z）
+./rl_policy/tracking_online.sh    # 动作跟踪（B 网络在线算 z，支持文件 / ZMQ 流）
+./rl_policy/reward.sh             # reward 推理
+./rl_policy/goal.sh               # goal 到达
 ```
+
+`tracking_online` 的详细启动顺序与 ZMQ 接入说明见 [`docs/online_tracking_zmq.md`](docs/online_tracking_zmq.md)。
 
 
 ### 3.4 键盘交互

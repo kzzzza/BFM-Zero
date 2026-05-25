@@ -45,6 +45,7 @@ PORTS = {
     "stair_pose": 5572,
     "low_state": 5590,
     "low_cmd": 5591,
+    "motion_frame": 5592,
 }
 
 class PoseMessage:
@@ -335,4 +336,100 @@ class LowStateMessage:
             joint_velocities=joint_velocities,
             joint_torques=joint_torques,
             tick=tick,
+        )
+
+
+class MotionFrameMessage:
+    """Per-frame motion state pushed to the online tracking policy.
+
+    Carries the minimal kinematic state required by ``BackwardObsBuilder``:
+    root pose + root velocities (world frame) + 29-DoF joint pos/vel. Body
+    positions/quaternions are intentionally NOT transmitted — they are
+    reconstructed via ``mj_forward`` on the receiver side so kinematics stay
+    consistent with the offline z-generation pipeline.
+    """
+
+    NUM_DOF = 29
+    FLAG_END = 1 << 0  # producer signals end-of-motion
+
+    def __init__(
+        self,
+        frame_idx: int,
+        joint_pos: np.ndarray,
+        joint_vel: np.ndarray,
+        root_pos: np.ndarray,
+        root_quat: np.ndarray,
+        root_lin_vel_w: np.ndarray,
+        root_ang_vel_w: np.ndarray,
+        flags: int = 0,
+    ):
+        self.frame_idx = int(frame_idx)
+        self.flags = int(flags)
+
+        self.joint_pos = np.asarray(joint_pos, dtype=np.float32)
+        self.joint_vel = np.asarray(joint_vel, dtype=np.float32)
+        if self.joint_pos.size != self.NUM_DOF or self.joint_vel.size != self.NUM_DOF:
+            raise ValueError(
+                f"joint_pos / joint_vel must each have {self.NUM_DOF} elements"
+            )
+
+        self.root_pos = np.asarray(root_pos, dtype=np.float32)
+        self.root_quat = np.asarray(root_quat, dtype=np.float32)
+        self.root_lin_vel_w = np.asarray(root_lin_vel_w, dtype=np.float32)
+        self.root_ang_vel_w = np.asarray(root_ang_vel_w, dtype=np.float32)
+        if self.root_pos.size != 3 or self.root_lin_vel_w.size != 3 or self.root_ang_vel_w.size != 3:
+            raise ValueError("root_pos / root_lin_vel_w / root_ang_vel_w must have 3 elements")
+        if self.root_quat.size != 4:
+            raise ValueError("root_quat must have 4 elements [w, x, y, z]")
+
+    def to_bytes(self) -> bytes:
+        header = struct.pack('<II', self.frame_idx, self.flags)
+        payload = b''.join(
+            arr.astype(np.float32, copy=False).tobytes()
+            for arr in (
+                self.joint_pos,
+                self.joint_vel,
+                self.root_pos,
+                self.root_quat,
+                self.root_lin_vel_w,
+                self.root_ang_vel_w,
+            )
+        )
+        return header + payload
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> 'MotionFrameMessage':
+        header_size = struct.calcsize('<II')
+        expected = header_size + (2 * cls.NUM_DOF + 3 + 4 + 3 + 3) * 4
+        if len(data) != expected:
+            raise ValueError(
+                f"MotionFrameMessage data length {len(data)} != expected {expected}"
+            )
+
+        frame_idx, flags = struct.unpack('<II', data[:header_size])
+        offset = header_size
+
+        def take(n_floats: int) -> np.ndarray:
+            nonlocal offset
+            seg = n_floats * 4
+            arr = np.frombuffer(data[offset:offset + seg], dtype=np.float32).copy()
+            offset += seg
+            return arr
+
+        joint_pos = take(cls.NUM_DOF)
+        joint_vel = take(cls.NUM_DOF)
+        root_pos = take(3)
+        root_quat = take(4)
+        root_lin_vel_w = take(3)
+        root_ang_vel_w = take(3)
+
+        return cls(
+            frame_idx=frame_idx,
+            joint_pos=joint_pos,
+            joint_vel=joint_vel,
+            root_pos=root_pos,
+            root_quat=root_quat,
+            root_lin_vel_w=root_lin_vel_w,
+            root_ang_vel_w=root_ang_vel_w,
+            flags=flags,
         )

@@ -23,6 +23,10 @@ from utils.onnx_module import Timer
 from rl_policy.observations import Observation, ObsGroup
 from rl_policy.utils.state_processor import StateProcessor
 from rl_policy.utils.command_sender import CommandSender
+from rl_policy.utils.online_z_provider import OnlineZProvider
+from rl_policy.utils.motion_subscriber import MotionSubscriber
+from scripts.utils.motion_loader import load_motion
+from utils.common import PORTS, MotionFrameMessage
 # -------------------------------------------------------------------------------------------------
 # High-level RL policy that plugs into the existing framework
 # -------------------------------------------------------------------------------------------------
@@ -244,6 +248,128 @@ class BFMZeroPolicy:
             if self.num_selected_goals ==1:
                 logger.info(colored(f"Only one goal is selected, make sure that is what you want", "red"))
 
+        # online tracking: compute z per-frame from a motion source via the B-network
+        elif self.task_type == "tracking_online":
+            self._setup_tracking_online(exp_config, model_path)
+
+
+    def _setup_tracking_online(self, exp_config: Dict[str, Any], model_path: str) -> None:
+        """Configure on-the-fly z inference (B-network) for ``tracking_online``.
+
+        Two motion sources:
+          * ``source: file`` — load an .npz once and index it by ``self.t``
+            (offline-equivalent forward-looking sliding window).
+          * ``source: zmq``  — subscribe to ``MotionFrameMessage`` frames; the
+            producer drives ``self.t`` via the message's ``frame_idx``. Forces
+            ``seq_length = 1`` because look-ahead is impossible.
+        """
+        self.tracking_online_source = exp_config.get("source", "file")
+        repo_root = Path(model_path).resolve().parent.parent.parent
+
+        scene_xml = Path(exp_config.get("scene_xml", "data/robots/g1/g1_for_backward_obs.xml"))
+        if not scene_xml.is_absolute():
+            scene_xml = repo_root / scene_xml
+        backward_onnx = Path(exp_config.get(
+            "backward_onnx", "model/exported/FBcprAuxModel_backward_test.onnx"
+        ))
+        if not backward_onnx.is_absolute():
+            backward_onnx = repo_root / backward_onnx
+        if not scene_xml.exists():
+            raise FileNotFoundError(f"tracking_online: scene_xml not found at {scene_xml}")
+        if not backward_onnx.exists():
+            raise FileNotFoundError(f"tracking_online: backward_onnx not found at {backward_onnx}")
+
+        seq_length = int(exp_config.get("seq_length", 1))
+
+        if self.tracking_online_source == "file":
+            motion_path = Path(exp_config["motion_path"])
+            if not motion_path.is_absolute():
+                motion_path = repo_root / motion_path
+            self.t_start = int(exp_config.get("start", 0))
+            t_end_cfg = int(exp_config.get("end", -1))
+            self.t_stop = int(exp_config.get("stop", 0))
+            logger.info(f"tracking_online[file]: loading {motion_path} (start={self.t_start}, end={t_end_cfg})")
+            self.motion = load_motion(str(motion_path), start=self.t_start, end=t_end_cfg)
+            self.motion_length = self.motion["joint_pos"].shape[0]
+            fps = self.motion["fps"]
+            dt = 1.0 / fps
+            # `self.t` indexes the loaded slice (0-based). t_start/t_end below are
+            # in the same 0-based coordinate so existing tracking-style code paths
+            # advancing `self.t` work without translation.
+            self.t_start = 0
+            self.t_end = self.motion_length if t_end_cfg <= 0 else min(self.motion_length, t_end_cfg - int(exp_config.get("start", 0)))
+            logger.info(
+                f"tracking_online[file]: {self.motion_length} frames @ {fps} fps, "
+                f"format={self.motion['format']}, seq_length={seq_length}"
+            )
+            self.motion_subscriber = None
+        elif self.tracking_online_source == "zmq":
+            zmq_port = int(exp_config.get("zmq_port", PORTS["motion_frame"]))
+            zmq_ip = exp_config.get("zmq_ip", "localhost")
+            if seq_length != 1:
+                logger.warning(
+                    f"tracking_online[zmq]: seq_length={seq_length} is unsupported in stream mode; "
+                    f"forcing seq_length=1 (online cannot look ahead)."
+                )
+                seq_length = 1
+            self.motion = None
+            self.motion_length = None
+            self.t_start = 0
+            self.t_end = None
+            self.t_stop = 0
+            dt = self.rl_dt  # producer expected to publish at policy rate
+            self.motion_subscriber = MotionSubscriber(port=zmq_port, ip=zmq_ip)
+            logger.info(f"tracking_online[zmq]: subscribing on tcp://{zmq_ip}:{zmq_port}, dt={dt:.4f}")
+        else:
+            raise ValueError(
+                f"tracking_online: unknown source '{self.tracking_online_source}'. Use 'file' or 'zmq'."
+            )
+
+        self.seq_length = seq_length
+        self.z_provider = OnlineZProvider(
+            scene_xml=str(scene_xml),
+            onnx_path=str(backward_onnx),
+            seq_length=self.seq_length,
+            dt=dt,
+        )
+        self._last_online_z: np.ndarray | None = None
+        self._zmq_end_seen = False
+
+        # Warm up the backward ONNX so its first-call JIT/allocation cost is
+        # paid here (at init) and not inside the policy loop. Without this, the
+        # first ZMQ-driven step blows the 20 ms / 50 Hz budget. The dummy state
+        # is a neutral default pose; we then reset() so the cache stays empty.
+        self.z_provider.push_frame(
+            frame_idx=0,
+            joint_pos=np.zeros(29, dtype=np.float32),
+            joint_vel=np.zeros(29, dtype=np.float32),
+            root_pos=np.array([0.0, 0.0, 0.75], dtype=np.float32),
+            root_quat=np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32),
+            root_lin_vel_w=np.zeros(3, dtype=np.float32),
+            root_ang_vel_w=np.zeros(3, dtype=np.float32),
+        )
+        self.z_provider.reset()
+        logger.info("tracking_online: backward ONNX warmed up")
+
+
+    def _start_tracking_online_motion(self) -> None:
+        """Reset the z provider and pre-seed the sliding window so the very
+        first policy step after ``[`` doesn't blow the 20 ms budget on a
+        ``seq_length``-burst of backward ONNX calls.
+        """
+        self.z_provider.reset()
+        self._last_online_z = None
+        self._zmq_end_seen = False
+        if self.tracking_online_source == "file":
+            self.t = self.t_start
+            window_end = min(self.t + self.seq_length, self.motion_length)
+            for k in range(self.t, window_end):
+                self.z_provider.push_frame_from_motion(self.motion, k)
+            self._last_online_z = self.z_provider.get_z(self.t, self.motion_length)
+        else:
+            # zmq: cache is seeded lazily on the first received frame.
+            self.t = 0
+
 
     def setup_policy(self, model_path):
         # load onnx policy
@@ -259,6 +385,15 @@ class BFMZeroPolicy:
         def policy_act(obs):
             return self.onnx_policy_session.run([self.onnx_output_name], {self.onnx_input_name: obs})[0]
         self.policy = policy_act
+
+        # Warm up policy ONNX so the first inference inside the 50 Hz loop is
+        # not delayed by JIT/allocation. Shape comes from the model itself so
+        # this works for any input layout.
+        in_shape = self.onnx_policy_session.get_inputs()[0].shape
+        dummy_shape = tuple(1 if (not isinstance(d, int) or d is None) else d for d in in_shape)
+        dummy = np.zeros(dummy_shape, dtype=np.float32)
+        self.onnx_policy_session.run([self.onnx_output_name], {self.onnx_input_name: dummy})
+        logger.info(f"Policy ONNX warmed up (input shape={dummy_shape})")
 
     def setup_observations(self):
         """Setup observations for policy inference"""
@@ -316,6 +451,9 @@ class BFMZeroPolicy:
                 else:
                     self.t = self.t_stop
                     self.start_motion = False
+        elif self.task_type == "tracking_online":
+            z = self._compute_online_z()
+            inputs = np.concatenate([obs, z[np.newaxis, :]], axis=-1).astype(np.float32)
         elif self.task_type == "reward":
             try:
                 inputs = np.concatenate([obs, self.selected_z[self.z_index]], axis=-1).astype(np.float32)
@@ -333,6 +471,74 @@ class BFMZeroPolicy:
                 raise e
 
         return obs_dict, inputs
+
+    def _compute_online_z(self) -> np.ndarray:
+        """Per-step z computation for ``tracking_online``.
+
+        File source: extend the cache to cover ``[t, t + seq_length)`` (only
+        the new frontier frame requires a backward ONNX call at steady state),
+        take the projected mean, then advance ``self.t`` exactly like the
+        existing tracking branch.
+
+        ZMQ source: consume the next queued motion frame (if any), push it
+        into the provider, take ``get_z(t)``. On underrun (no new frame), the
+        previous z is reused — this keeps the policy responsive at the cost of
+        one stale step.
+        """
+        if self.tracking_online_source == "file":
+            if self.start_motion:
+                window_end = min(self.t + self.seq_length, self.motion_length)
+                next_k = self.z_provider.next_frame_to_seed(default_start=self.t)
+                for k in range(next_k, window_end):
+                    self.z_provider.push_frame_from_motion(self.motion, k)
+                z = self.z_provider.get_z(self.t, self.motion_length)
+                self._last_online_z = z
+            elif self._last_online_z is not None:
+                z = self._last_online_z
+            else:
+                # Motion has never been started yet — feed a zero z so the
+                # policy stays at default pose until the user presses `[`.
+                z = np.zeros(256, dtype=np.float32)
+
+            if self.use_policy_action:
+                if self.start_motion and self.t < self.t_end - 1:
+                    self.t += 1
+                    if self.t % 100 == 0:
+                        logger.info(f"tracking_online step={self.t}/{self.t_end}")
+                elif self.start_motion:
+                    logger.info(f"tracking_online: reached end (t={self.t}), stopping")
+                    self.t = self.t_stop
+                    self.start_motion = False
+            return z
+
+        # zmq source
+        msg = self.motion_subscriber.poll()
+        if msg is not None:
+            if msg.flags & MotionFrameMessage.FLAG_END:
+                self._zmq_end_seen = True
+                logger.info("tracking_online[zmq]: END flag received")
+                self.start_motion = False
+            self.z_provider.push_frame(
+                frame_idx=msg.frame_idx,
+                joint_pos=msg.joint_pos,
+                joint_vel=msg.joint_vel,
+                root_pos=msg.root_pos,
+                root_quat=msg.root_quat,
+                root_lin_vel_w=msg.root_lin_vel_w,
+                root_ang_vel_w=msg.root_ang_vel_w,
+            )
+            self.t = msg.frame_idx
+            z = self.z_provider.get_z(self.t, motion_length=None)
+            self._last_online_z = z
+        else:
+            if self._last_online_z is None:
+                # No frame ever received yet — return a zero z (policy stays at
+                # default pose until the producer starts publishing).
+                self._last_online_z = np.zeros(256, dtype=np.float32)
+            else:
+                logger.debug("tracking_online[zmq]: underrun, reusing last z")
+            z = self._last_online_z
+        return z
 
     def get_init_target(self):
         if self.init_count > 500:
@@ -478,6 +684,9 @@ class BFMZeroPolicy:
                 logger.info(colored(f"Switch to goal={list(self.z_dict.keys())[self.z_index]} (Count: {self.z_index+1}/{len(self.z_dict)})", "blue"))
             if self.task_type == "tracking":
                 self.t = self.t_stop
+            if self.task_type == "tracking_online":
+                self.t = self.t_stop
+                self.start_motion = False
 
         elif cur_key == "R2":
             self.use_policy_action = False
@@ -492,6 +701,10 @@ class BFMZeroPolicy:
                 logger.info("Starting motion")
                 self.start_motion = True
                 self.t = self.t_start
+            elif self.task_type == "tracking_online":
+                logger.info("Starting motion (tracking_online): seeding z cache")
+                self._start_tracking_online_motion()
+                self.start_motion = True
             else:
                 logger.info(colored(f"Commmand [ is undefined in current task type {self.task_type}!", "red"))
                 pass
@@ -499,6 +712,8 @@ class BFMZeroPolicy:
             self.z_index = 0
             self.start_motion = False
             if self.task_type == "tracking":
+                self.t = self.t_stop
+            if self.task_type == "tracking_online":
                 self.t = self.t_stop
             logger.info("Resetting to stop state")
         elif cur_key == "Y":
@@ -575,11 +790,18 @@ class BFMZeroPolicy:
                 logger.info(colored(f"Switch to goal={list(self.z_dict.keys())[self.z_index]} (Count: {self.z_index+1}/{len(self.z_dict)})", "blue"))
             if self.task_type == "tracking":
                 self.t = self.t_stop
+            if self.task_type == "tracking_online":
+                self.t = self.t_stop
+                self.start_motion = False
         elif keycode == "[":
             if self.task_type == "tracking":
                 logger.info("Starting motion")
                 self.start_motion = True
                 self.t = self.t_start
+            elif self.task_type == "tracking_online":
+                logger.info("Starting motion (tracking_online): seeding z cache")
+                self._start_tracking_online_motion()
+                self.start_motion = True
             else:
                 logger.info(colored(f"Commmand [ is undefined in current task type {self.task_type}!", "red"))
                 pass
@@ -601,6 +823,8 @@ class BFMZeroPolicy:
             self.z_index = 0
             self.start_motion = False
             if self.task_type == "tracking":
+                self.t = self.t_stop
+            if self.task_type == "tracking_online":
                 self.t = self.t_stop
             logger.info("Resetting to stop state")
         elif keycode == "o":

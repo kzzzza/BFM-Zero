@@ -1,0 +1,17 @@
+type: tracking_online
+source: file           # 'file' (load .npz once) or 'zmq' (subscribe to MotionFrameMessage)
+
+# Common (both sources)
+seq_length: 1          # forward-looking averaging window; ZMQ mode forces 1
+scene_xml: data/robots/g1/g1_for_backward_obs.xml
+backward_onnx: model/exported/FBcprAuxModel_backward_test.onnx
+
+# --- source: file ---
+motion_path: data/motions/amass/Form_1_stageii.npz
+start: 0               # slice start in motion frames
+end: 5000              # slice end (-1 = full length)
+stop: 0                # frame to hold at when motion finishes / before [ is pressed
+
+# --- source: zmq (uncomment to use) ---
+zmq_port: 5592
+zmq_ip: localhost
